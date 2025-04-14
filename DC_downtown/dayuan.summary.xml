@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2025-04-13 16:54:20 by Eclipse SUMO sumo Version 1.20.0
+<configuration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
+
+    <input>
+        <net-file value="DC_downtown/dcDowntown.net.xml"/>
+        <route-files value="DC_downtown/dcDowntown.rou.xml"/>
+        <additional-files value="DC_downtown/dcDowntown.poly.xml"/>
+    </input>
+
+    <output>
+        <summary-output value="DC_downtown/dayuan.summary.xml"/>
+    </output>
+
+    <time>
+        <begin value="0"/>
+        <end value="1000"/>
+    </time>
+
+    <processing>
+        <waiting-time-memory value="1000"/>
+    </processing>
+
+    <report>
+        <duration-log.statistics value="true"/>
+        <no-step-log value="true"/>
+    </report>
+
+    <traci_server>
+        <remote-port value="55232"/>
+    </traci_server>
+
+    <gui_only>
+        <gui-settings-file value="DC_downtown/dayuan.settings.xml"/>
+    </gui_only>
+
+</configuration>
+-->
+
+<summary xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/summary_file.xsd">
+    <step time="0.00" loaded="2" inserted="1" running="1" waiting="0" ended="0" arrived="0" collisions="0" teleports="0" halting="1" stopped="0" meanWaitingTime="0.00" meanTravelTime="-1.00" meanSpeed="0.00" meanSpeedRelative="0.00" duration="0"/>
+    <step time="1.00" loaded="968" inserted="6" running="6" waiting="0" ended="0" arrived="0" collisions="0" teleports="0" halting="5" stopped="0" meanWaitingTime="0.67" meanTravelTime="-1.00" meanSpeed="0.42" meanSpeedRelative="0.03" duration="29"/>
+    <step time="2.00" loaded="968" inserted="11" running="11" waiting="0" ended="0" arrived="0" collisions="0" teleports="0" halting="5" stopped="0" meanWaitingTime="0.73" meanTravelTime="-1.00" meanSpeed="1.21" meanSpeedRelative="0.09" duration="0"/>
+</summary>
