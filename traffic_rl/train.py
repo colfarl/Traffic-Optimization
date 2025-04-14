@@ -1,168 +1,96 @@
 # train.py
 
-import os
-import sys
-import traci
-import numpy as np
-from agents.dqn_agent import DQNAgent
-import matplotlib.pyplot as plt
-from datetime import datetime
-import time
-
 from env.traffic_env import TrafficEnv
+from agents.dqn_agent import DQNAgent
+import torch
 
-class TrafficEnvironment:
-    def __init__(self, sumo_config_path):
-        self.sumo_config_path = sumo_config_path
-        self.state_size = 8  # Queue lengths for 4 approaches, 2 lanes each
-        self.action_size = 4  # 4 possible signal phases
-        self.edges = ['gneE0', 'gneE1', 'gneE2', 'gneE3']  # Correct edge IDs
-        
-    def get_state(self):
-        """Get current state of the intersection"""
-        state = []
-        # Get queue lengths for each approach
-        for edge in self.edges:
-            for lane in range(2):  # 2 lanes per approach
-                queue_length = len(traci.edge.getLastStepHaltingVehicles(f"{edge}_{lane}"))
-                state.append(queue_length)
-        return np.array(state)
-    
-    def get_reward(self):
-        """Calculate reward based on waiting time and queue lengths"""
-        total_waiting_time = 0
-        total_queue_length = 0
-        
-        for edge in self.edges:
-            for lane in range(2):
-                waiting_time = traci.edge.getWaitingTime(f"{edge}_{lane}")
-                queue_length = len(traci.edge.getLastStepHaltingVehicles(f"{edge}_{lane}"))
-                total_waiting_time += waiting_time
-                total_queue_length += queue_length
-        
-        # Negative reward for waiting time and queue length
-        reward = -0.1 * total_waiting_time - 0.01 * total_queue_length
-        return reward
-    
-    def step(self, action):
-        """Execute one step in the environment"""
-        # Set traffic light phase based on action
-        traci.trafficlight.setPhase("intersection", action)
-        traci.simulationStep()
-        
-        next_state = self.get_state()
-        reward = self.get_reward()
-        done = traci.simulation.getTime() >= 3600  # End after 1 hour
-        
-        return next_state, reward, done
-
-def train_agent(env, agent, episodes=100, batch_size=32, target_update=10):
-    """Train the DQN agent"""
-    for episode in range(episodes):
-        try:
-            # Use sumo instead of sumo-gui for training
-            traci.start(["sumo", "-c", env.sumo_config_path])
-            
-            state = env.get_state()
-            total_reward = 0
-            done = False
-            
-            while not done:
-                action = agent.act(state)
-                next_state, reward, done = env.step(action)
-                
-                agent.remember(state, action, reward, next_state, done)
-                agent.replay(batch_size)
-                
-                state = next_state
-                total_reward += reward
-                
-                if traci.simulation.getTime() % 100 == 0:
-                    print(f"Time: {traci.simulation.getTime()}, Reward: {reward:.2f}")
-            
-            agent.reward_history.append(total_reward)
-            
-            if episode % target_update == 0:
-                agent.update_target_model()
-            
-            traci.close()
-            
-            print(f"Episode: {episode + 1}/{episodes}, Total Reward: {total_reward:.2f}, Epsilon: {agent.epsilon:.2f}")
-            
-            # Save model and plot progress every 10 episodes
-            if (episode + 1) % 10 == 0:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                agent.save(f"models/dqn_agent_{timestamp}.pt")
-                agent.plot_training_progress(f"plots/training_progress_{timestamp}.png")
-                
-        except Exception as e:
-            print(f"Error in episode {episode + 1}: {str(e)}")
-            try:
-                traci.close()
-            except:
-                pass
-            time.sleep(1)  # Wait before retrying
-
-def main():
-    if len(sys.argv) != 2:
-        print("Usage: python train.py <sumo_config_path>")
-        sys.exit(1)
-    
-    sumo_config_path = sys.argv[1]
-    
-    # Create necessary directories
-    os.makedirs("models", exist_ok=True)
-    os.makedirs("plots", exist_ok=True)
-    
-    # Initialize environment and agent
-    env = TrafficEnvironment(sumo_config_path)
-    agent = DQNAgent(env.state_size, env.action_size)
-    
-    # Train the agent
-    train_agent(env, agent, episodes=50, batch_size=32, target_update=10)
-
-if __name__ == "__main__":
-    main()
-
-def evaluate_dqn_agent(load_model_path="dqn_model.pth", episodes=1):
-    """
-    Optional function to load a trained model and run a few evaluation episodes.
-    This is helpful to check performance without exploration (epsilon=0).
-    """
-    # Recreate the same environment config used during training
+def train():
     config = {
-        "sumo_config": "DC_downtown/dayuan.sumocfg",
-        "max_steps": 12000,
-        "yellow_time": 3,
-        "min_green": 10,
-        "max_green": 60
+        "sumo_config": "simple/simple_grid.sumocfg",
+        "max_steps": 1000
     }
+
     env = TrafficEnv(config)
+    state_dim = env.observation_space.shape[0]
+    action_dim = env.action_space.n
 
-    # Match agent's expected dimensions
-    state_size = env.observation_space.shape[0]
-    action_size = env.action_space.n
+    agent = DQNAgent(state_dim, action_dim, device="cpu")
 
-    # Create agent and load weights
-    agent = DQNAgent(
-        state_size=state_size,
-        action_size=action_size
-    )
-    agent.load(load_model_path)
-
-    # Set epsilon to 0 for pure exploitation
-    agent.epsilon = 0.0
-
-    for ep in range(episodes):
+    num_episodes = 50
+    for ep in range(num_episodes):
         state = env.reset()
-        done = False
         total_reward = 0
+        done = False
+
         while not done:
             action = agent.act(state)
-            next_state, reward, done, info = env.step(action)
+            next_state, reward, done, _ = env.step(action)
+
+            agent.remember(state, action, reward, next_state, done)
+            agent.replay()
+
             state = next_state
             total_reward += reward
 
-        print(f"[Eval] Episode {ep+1}/{episodes} finished. Reward = {total_reward:.2f}")
+        agent.update_target()
+        print(f"Episode {ep+1} - Total Reward: {total_reward:.2f} - Epsilon: {agent.epsilon:.3f}")
 
+    agent.save("dqn_traffic_model.pth")
+    print("Model saved.")
     env.close()
+
+def train_multi_env():
+    env_files = [
+        "simple/simple_grid.sumocfg",
+        "simple2/random.sumocfg",
+        "simple3/random.sumocfg"
+    ]
+
+    num_episodes = 150
+    update_target_interval = 5
+
+    agent = DQNAgent(
+        state_size=4,
+        action_size=4,
+        lr=0.001,
+        gamma=0.95,
+        epsilon=1.0,
+        epsilon_min=0.01,
+        epsilon_decay=0.995,
+        memory_size=10000,
+        batch_size=32,
+        device="cpu"
+    )
+
+    for episode in range(num_episodes):
+        total_reward = 0
+        for env_file in env_files:
+            config = {
+                "sumo_config": env_file,
+                "max_steps": 1000
+            }
+            env = TrafficEnv(config)
+            state = env.reset()
+            done = False
+
+            while not done:
+                action = agent.act(state)
+                next_state, reward, done, _ = env.step(action)
+                agent.remember(state, action, reward, next_state, done)
+                agent.replay()
+                state = next_state
+                total_reward += reward
+
+            env.close()
+
+        if (episode + 1) % update_target_interval == 0:
+            agent.update_target_network()
+
+        print(f"Episode {episode+1} - Total Reward: {total_reward:.2f} - Epsilon: {agent.epsilon:.3f}")
+
+    agent.save("dqn_multienv.pth")
+    print("Model saved.")
+
+if __name__ == "__main__":
+    #train()
+    train_multi_env()
