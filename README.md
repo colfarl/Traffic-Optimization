@@ -2,22 +2,6 @@
 
 This project implements a Deep Reinforcement Learning (DRL) approach for optimizing traffic signal control in urban environments using SUMO (Simulation of Urban MObility).
 
-## Project Structure
-
-```
-traffic_rl/
-├── baseline/                 # Baseline metrics collection and analysis
-│   ├── collect_baseline.py  # Metrics collection for traffic simulation
-│   └── results/             # Output directory for baseline results
-├── simple/                  # Simple intersection test cases
-│   ├── simple_grid.sumocfg  # Configuration for simple grid network
-│   └── ...
-├── simple2/                 # Additional test cases
-│   ├── random.sumocfg       # Configuration for random network
-│   └── ...
-└── requirements.txt         # Python dependencies
-```
-
 ## Setup
 
 1. Install SUMO:
