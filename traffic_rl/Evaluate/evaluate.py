@@ -21,14 +21,14 @@ from traffic_rl.env.traffic_env import TrafficEnv
 from traffic_rl.agents.dqn_agent import DQNAgent
 
 
-def run_fixed_time(env: TrafficEnv, phase: int = 0) -> Dict[str, List[float]]:
-    """Cycle a static phase for the whole episode and log KPIs."""
+def run_fixed_time(env: TrafficEnv, cycle_len: int = 60) -> Dict[str, List[float]]:
     metrics = defaultdict_lists()
     state = env.reset()
-    done, step = False, 0
-
+    done, step, current_phase = False, 0, 0
     while not done:
-        _, reward, done, _ = env.step(phase)  # keep light on selected phase
+        if step % cycle_len == 0:                
+            current_phase = (current_phase + 2) % 4
+        _, reward, done, _ = env.step(current_phase)
         log_step(metrics, env, reward, step)
         step += 1
     return metrics
@@ -100,6 +100,8 @@ def main() -> None:
 
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--model_path", help="Path to .pth checkpoint")
+    parser.add_argument("--baseline_cycle", type=int, default=60,
+                    help="Cycle length in seconds for fixed-time baseline")
     mode.add_argument("--baseline", action="store_true", help="Run fixed phase 0")
 
     args = parser.parse_args()
@@ -115,7 +117,7 @@ def main() -> None:
         )
 
         if args.baseline:
-            ep_metrics = run_fixed_time(env, phase=0)
+            ep_metrics = run_fixed_time(env, cycle_len=args.baseline_cycle)
         else:
             agent = DQNAgent(state_size=4, action_size=4, device="cpu")
             agent.load(args.model_path)
