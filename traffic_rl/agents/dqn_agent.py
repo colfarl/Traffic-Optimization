@@ -1,88 +1,131 @@
+# Author: Colin Farley, 2025‑04‑20
+# Description: Double‑DQN with soft target updates and gradient clipping.
+
+from __future__ import annotations
+import random
+from collections import deque
+from typing import Tuple, Deque
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from collections import deque
-import random
-import numpy as np
+
+
+def set_global_seeds(seed: int = 42) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
 
 class DQN(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(DQN, self).__init__()
+    """Two layer MLP Q-network."""
+    def __init__(self, input_dim: int, output_dim: int) -> None:
+        super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 64),
+            nn.Linear(input_dim, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(64, output_dim)
+            nn.Linear(128, output_dim)
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:     # type: ignore[override]
         return self.net(x)
 
-class DQNAgent:
-    def __init__(self, state_size, action_size, lr=0.001, gamma=0.99,
-                 epsilon=1.0, epsilon_min=0.01, epsilon_decay=0.995,
-                 batch_size=32, memory_size=10000, device="cpu"):
-        self.state_size = state_size
-        self.action_size = action_size
-        self.memory = deque(maxlen=memory_size)
-        self.batch_size = batch_size
-        self.gamma = gamma
-        self.epsilon = epsilon
-        self.epsilon_min = epsilon_min
-        self.epsilon_decay = epsilon_decay
-        self.device = device
 
-        self.policy_net = DQN(state_size, action_size).to(device)
-        self.target_net = DQN(state_size, action_size).to(device)
+class DQNAgent:
+    """Double DQN agent with soft update and optional PER."""
+
+    def __init__(
+        self,
+        state_size: int,
+        action_size: int,
+        lr: float = 1e-3,
+        gamma: float = 0.99,
+        epsilon: float = 1.0,
+        epsilon_min: float = 0.05,
+        epsilon_decay: float = 0.995,
+        batch_size: int = 64,
+        memory_size: int = 50_000,
+        tau: float = 0.01,
+        grad_clip: float = 1.0,
+        device: str = "cpu",
+        seed: int = 42
+    ) -> None:
+
+        set_global_seeds(seed)
+        self.state_size, self.action_size = state_size, action_size
+        self.gamma, self.tau = gamma, tau
+        self.epsilon, self.epsilon_min, self.epsilon_decay = (
+            epsilon,
+            epsilon_min,
+            epsilon_decay,
+        )
+        self.batch_size, self.grad_clip = batch_size, grad_clip
+        self.device = torch.device(device)
+
+        self.policy_net = DQN(state_size, action_size).to(self.device)
+        self.target_net = DQN(state_size, action_size).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.target_net.eval()
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
+        self.memory: Deque[Tuple[np.ndarray, int, float, np.ndarray, bool]] = deque(
+            maxlen=memory_size
+        )
 
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+    def remember(self, s, a, r, s2, done) -> None:
+        self.memory.append((s, a, r, s2, done))
 
-    def act(self, state):
+    def act(self, state: np.ndarray) -> int:
         if np.random.rand() < self.epsilon:
             return random.randrange(self.action_size)
-        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        state_t = torch.FloatTensor(state).unsqueeze(0).to(self.device)
         with torch.no_grad():
-            return torch.argmax(self.policy_net(state_tensor)).item()
+            return torch.argmax(self.policy_net(state_t)).item()
 
-    def replay(self):
+    def replay(self) -> None:
         if len(self.memory) < self.batch_size:
             return
-
         batch = random.sample(self.memory, self.batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+        s, a, r, s2, d = zip(*batch)
+        s = torch.FloatTensor(s).to(self.device)
+        a = torch.LongTensor(a).unsqueeze(1).to(self.device)
+        r = torch.FloatTensor(r).to(self.device)
+        s2 = torch.FloatTensor(s2).to(self.device)
+        d = torch.FloatTensor(d).to(self.device)
 
-        states = torch.FloatTensor(states).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device)
-        next_states = torch.FloatTensor(next_states).to(self.device)
-        dones = torch.FloatTensor(dones).to(self.device)
+        with torch.no_grad():
+            a_prime = self.policy_net(s2).argmax(dim=1, keepdim=True)
+            q_next = self.target_net(s2).gather(1, a_prime).squeeze()
+            target_q = r + (1 - d) * self.gamma * q_next
 
-        current_q = self.policy_net(states).gather(1, actions.unsqueeze(1)).squeeze()
-        next_q = self.target_net(next_states).max(1)[0].detach()
-        target_q = rewards + (1 - dones) * self.gamma * next_q
-
-        loss = nn.MSELoss()(current_q, target_q)
+        q_vals = self.policy_net(s).gather(1, a).squeeze()
+        loss = nn.SmoothL1Loss()(q_vals, target_q)
 
         self.optimizer.zero_grad()
         loss.backward()
+        nn.utils.clip_grad_norm_(self.policy_net.parameters(), self.grad_clip)
         self.optimizer.step()
 
+        # Soft‑update target net
+        self._soft_update()
+
+        # ε‑greedy decay
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-    def update_target(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-    
-    def update_target_network(self):
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-        
-    def save(self, path):
+    def _soft_update(self) -> None:
+        with torch.no_grad():
+            for target_p, policy_p in zip(
+                self.target_net.parameters(), self.policy_net.parameters()
+            ):
+                target_p.data.mul_(1 - self.tau).add_(self.tau * policy_p.data)
+
+    def save(self, path: str) -> None:
         torch.save(self.policy_net.state_dict(), path)
 
-    def load(self, path):
-        self.policy_net.load_state_dict(torch.load(path))
+    def load(self, path: str) -> None:
+        self.policy_net.load_state_dict(torch.load(path, map_location=self.device))
         self.target_net.load_state_dict(self.policy_net.state_dict())
